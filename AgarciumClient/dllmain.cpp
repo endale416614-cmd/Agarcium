@@ -18,7 +18,7 @@ FILE* fpstderr = stderr;
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     auto& loader = ModLoader::Instance();
     switch (ul_reason_for_call) {
-    case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH: {
         DisableThreadLibraryCalls(hModule);
         setlocale(LC_ALL, CLIENT_LOCALE);
 
@@ -52,15 +52,26 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         // On failure: remove every hook already installed (returning FALSE unloads this DLL, so live hooks would
         // jump into freed memory), then close the game - it must not run without the redirect and offline guard.
-        if (!win::Hook() || !winsock::Hook() || !offline::Hook()) {
+        // winsock::Hook succeeds only if at least one complete TCP enforcement layer is active, and
+        // offline::Hook only if every DNS/UDP/ConnectEx/Discord guard is in place.
+        const char* failed = nullptr;
+        if (!win::Hook()) failed = "window";
+        else if (!winsock::Hook()) failed = "winsock (no TCP enforcement layer could be installed)";
+        else if (!offline::Hook()) failed = "internet guard";
+
+        if (failed) {
+            std::cerr << "[DllMain] Hook installation failed: " << failed << std::endl;
             MH_DisableHook(MH_ALL_HOOKS);
             MH_Uninitialize();
-            MessageBoxA(NULL, "Failed to install the offline client patch (window, winsock or internet guard hooks).", "Error", MB_ICONERROR | MB_OK);
+            if (!offline::TestNoUI()) {
+                MessageBoxA(NULL, "Failed to install the offline client patch (window, winsock or internet guard hooks).", "Error", MB_ICONERROR | MB_OK);
+            }
             TerminateProcess(GetCurrentProcess(), 1);
             return FALSE;
         }
 
         break;
+    }
 
     case DLL_PROCESS_DETACH:
         FreeConsole();

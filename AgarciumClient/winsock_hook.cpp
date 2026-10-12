@@ -7,6 +7,7 @@
 #include <iostream>
 #include <mutex>
 #include <atomic>
+#include <string>
 #include "config.h"
 #include "hook.h"
 #include "winsock_hook.h"
@@ -281,12 +282,43 @@ namespace winsock {
             return result;
         }
 
+        // Hooks one WS2_32 export. True only if the hook is created AND enabled.
+        template <typename T>
+        bool HookExport(HMODULE module, const char* name, T detour, T* original) {
+            FARPROC target = GetProcAddress(module, name);
+            if (!target) {
+                std::cerr << "[WS2Hooks] " << name << " export not found" << std::endl;
+                return false;
+            }
+            MH_STATUS status = MH_CreateHook(target, reinterpret_cast<LPVOID>(detour), reinterpret_cast<LPVOID*>(original));
+            if (status != MH_OK) {
+                std::cerr << "[WS2Hooks] Failed to hook " << name << ": " << MH_StatusToString(status) << std::endl;
+                return false;
+            }
+            status = MH_EnableHook(target);
+            if (status != MH_OK) {
+                std::cerr << "[WS2Hooks] Failed to enable " << name << " hook: " << MH_StatusToString(status) << std::endl;
+                return false;
+            }
+            std::cout << "[WS2Hooks] " << name << " hook installed" << std::endl;
+            return true;
+        }
+
+        // Enforcement layer "ws2": the layer is complete only if BOTH connect and WSAConnect are hooked and enabled
+        // (they are the two TCP connect entry points of WS2_32 and both run offline::AllowAddress).
+        // getpeername only restores the original peer address for the redirect; its failure does not weaken
+        // enforcement, so it is logged but does not count against the layer.
         BOOL InstallWS2Hooks() {
             std::lock_guard<std::mutex> lock(g_HookMutex);
 
             if (g_WS2HooksInstalled.load()) {
                 std::cout << "[WS2Hooks] Already installed, skipping" << std::endl;
                 return TRUE;
+            }
+
+            if (offline::TestForcedFail("ws2")) {
+                std::cerr << "[WS2Hooks] (test) forced failure of the ws2 layer" << std::endl;
+                return FALSE;
             }
 
             std::cout << "[WS2Hooks] Installing WS2_32 direct API hooks..." << std::endl;
@@ -301,102 +333,39 @@ namespace winsock {
                 return FALSE;
             }
 
-            FARPROC pConnect = GetProcAddress(hWs2, "connect");
-            FARPROC pWSAConnect = GetProcAddress(hWs2, "WSAConnect");
-            FARPROC pGetpeername = GetProcAddress(hWs2, "getpeername");
-
-            std::cout << "[WS2Hooks] connect: " << (void*)pConnect
-                      << ", WSAConnect: " << (void*)pWSAConnect
-                      << ", getpeername: " << (void*)pGetpeername << std::endl;
-
-            bool success = true;
-
-            if (pConnect) {
-                MH_STATUS status = MH_CreateHook(pConnect, connect_Hook, (void**)&Original_connect);
-                if (status == MH_OK) {
-                    MH_EnableHook(pConnect);
-                    std::cout << "[WS2Hooks] connect hook installed" << std::endl;
-                } else {
-                    std::cerr << "[WS2Hooks] Failed to hook connect: " << status << std::endl;
-                    success = false;
-                }
+            bool connectOk = HookExport(hWs2, "connect", connect_Hook, &Original_connect);
+            bool wsaConnectOk = HookExport(hWs2, "WSAConnect", WSAConnect_Hook, &Original_WSAConnect);
+            bool peerNameOk = HookExport(hWs2, "getpeername", getpeername_Hook, &Original_getpeername);
+            if (!peerNameOk) {
+                std::cerr << "[WS2Hooks] WARNING: getpeername not hooked (enforcement unaffected)" << std::endl;
             }
 
-            if (pWSAConnect) {
-                MH_STATUS status = MH_CreateHook(pWSAConnect, WSAConnect_Hook, (void**)&Original_WSAConnect);
-                if (status == MH_OK) {
-                    MH_EnableHook(pWSAConnect);
-                    std::cout << "[WS2Hooks] WSAConnect hook installed" << std::endl;
-                } else {
-                    std::cerr << "[WS2Hooks] Failed to hook WSAConnect: " << status << std::endl;
-                    success = false;
-                }
-            }
-
-            if (pGetpeername) {
-                MH_STATUS status = MH_CreateHook(pGetpeername, getpeername_Hook, (void**)&Original_getpeername);
-                if (status == MH_OK) {
-                    MH_EnableHook(pGetpeername);
-                    std::cout << "[WS2Hooks] getpeername hook installed" << std::endl;
-                } else {
-                    std::cerr << "[WS2Hooks] Failed to hook getpeername: " << status << std::endl;
-                    success = false;
-                }
-            }
-
-            g_WS2HooksInstalled.store(success);
-            std::cout << "[WS2Hooks] WS2_32 hooks installation " << (success ? "complete" : "partial") << std::endl;
-            return success ? TRUE : FALSE;
+            bool layerOk = connectOk && wsaConnectOk;
+            g_WS2HooksInstalled.store(layerOk);
+            std::cout << "[WS2Hooks] WS2_32 connect layer " << (layerOk ? "complete" : "INCOMPLETE") << std::endl;
+            return layerOk ? TRUE : FALSE;
         }
     }
 
-    BOOL Hook() {
-        std::cout << "[WinsockHook] ============================================" << std::endl;
-        std::cout << "[WinsockHook] Initializing multi-layer winsock hook..." << std::endl;
-        std::cout << "[WinsockHook] Target hostname: " << config::HostName << std::endl;
-        std::cout << "[WinsockHook] ============================================" << std::endl;
-
-        // First, check if Winsock is already initialized (timing issue detection)
-        WSADATA wsaData;
-        int wsaInitResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (wsaInitResult == 0) {
-            std::cout << "[WinsockHook] WARNING: Winsock already initialized or just initialized now" << std::endl;
-            std::cout << "[WinsockHook] This may indicate WSPStartup was already called before our hook!" << std::endl;
-            WSACleanup();
-        } else {
-            std::cout << "[WinsockHook] Winsock not yet initialized (good for WSP hook)" << std::endl;
+    // Enforcement layer "wsp": WSPStartup of the MSAFD provider is hooked so that every provider's WSPConnect goes
+    // through WSPConnect_Hook. The layer is complete only if the hook is created AND enabled, and WSPStartup
+    // has not run yet. MSWSOCK.dll is loaded when the first socket is created, which is also when the provider
+    // starts, so an already-loaded MSWSOCK.dll means the hook would never fire and the layer cannot be counted.
+    static bool InstallWspLayer(bool providersAlreadyLoaded) {
+        if (offline::TestForcedFail("wsp")) {
+            std::cerr << "[WinsockHook] (test) forced failure of the wsp layer" << std::endl;
+            return false;
+        }
+        if (providersAlreadyLoaded) {
+            std::cerr << "[WinsockHook] WSP layer unusable: MSWSOCK.dll was loaded before the hook (WSPStartup already ran)" << std::endl;
+            return false;
         }
 
-        // ====================================================================
-        // Layer 1: WS2_32 Direct API Hooks (Primary - Most Reliable)
-        // ====================================================================
-        std::cout << "[WinsockHook] Installing Layer 1: WS2_32 direct API hooks..." << std::endl;
-        BOOL ws2Result = ws2_fallback::InstallWS2Hooks();
-        if (!ws2Result) {
-            std::cerr << "[WinsockHook] WARNING: WS2_32 hooks partially failed" << std::endl;
-        }
-
-        // ====================================================================
-        // Layer 2: WSP Hook (Secondary - May not trigger if already initialized)
-        // ====================================================================
-        std::cout << "[WinsockHook] Installing Layer 2: WSP hooks..." << std::endl;
-
-        static decltype(&WSPStartup) _WSPStartup = decltype(&WSPStartup)(hook::GetFuncAddress("MSWSOCK", "WSPStartup"));
-
-        if (!_WSPStartup) {
-            std::cerr << "[WinsockHook] WARNING: Failed to get WSPStartup address from MSWSOCK.dll" << std::endl;
-            std::cerr << "[WinsockHook] WSP layer hook will not be installed, relying on WS2_32 hooks only" << std::endl;
-            // Don't fail - we have WS2_32 hooks as fallback
-            g_HookInitialized.store(true);
-            return TRUE;
-        }
-        std::cout << "[WinsockHook] Found WSPStartup at: " << (void*)_WSPStartup << std::endl;
-
+        static decltype(&WSPStartup) _WSPStartup = nullptr;
         WSPStartupAddr = (WSPStartup_t)hook::GetFuncAddress("MSWSOCK", "WSPStartup");
         if (!WSPStartupAddr) {
-            std::cerr << "[WinsockHook] WARNING: Failed to get WSPStartup address (second call)" << std::endl;
-            g_HookInitialized.store(true);
-            return TRUE;  // WS2_32 hooks should work
+            std::cerr << "[WinsockHook] WSP layer unusable: WSPStartup not found in MSWSOCK.dll" << std::endl;
+            return false;
         }
         std::cout << "[WinsockHook] WSPStartupAddr: " << (void*)WSPStartupAddr << std::endl;
 
@@ -424,6 +393,7 @@ namespace winsock {
 
             lpProcTable->lpWSPConnect = WSPConnect_Hook;
             lpProcTable->lpWSPGetPeerName = WSPGetPeerName_Hook;
+            offline::TestReport("WSP_FIRED", "1");
 
             std::cout << "[WinsockHook] WSP hooks installed successfully" << std::endl;
             return ret;
@@ -431,28 +401,60 @@ namespace winsock {
 
         MH_STATUS createStatus = MH_CreateHook(WSPStartupAddr, Hook, reinterpret_cast<void**>(&_WSPStartup));
         if (createStatus != MH_OK) {
-            std::cerr << "[WinsockHook] WARNING: MH_CreateHook for WSPStartup failed with status: " << createStatus << std::endl;
-            std::cerr << "[WinsockHook] Relying on WS2_32 hooks only" << std::endl;
-            g_HookInitialized.store(true);
-            return TRUE;
+            std::cerr << "[WinsockHook] WSP layer unusable: MH_CreateHook for WSPStartup failed: " << MH_StatusToString(createStatus) << std::endl;
+            return false;
         }
-        std::cout << "[WinsockHook] MH_CreateHook for WSPStartup succeeded" << std::endl;
-
         MH_STATUS enableStatus = MH_EnableHook(WSPStartupAddr);
         if (enableStatus != MH_OK) {
-            std::cerr << "[WinsockHook] WARNING: MH_EnableHook for WSPStartup failed with status: " << enableStatus << std::endl;
-            std::cerr << "[WinsockHook] Relying on WS2_32 hooks only" << std::endl;
-            g_HookInitialized.store(true);
-            return TRUE;
+            std::cerr << "[WinsockHook] WSP layer unusable: MH_EnableHook for WSPStartup failed: " << MH_StatusToString(enableStatus) << std::endl;
+            return false;
         }
-        std::cout << "[WinsockHook] MH_EnableHook for WSPStartup succeeded" << std::endl;
+        std::cout << "[WinsockHook] MH_CreateHook/MH_EnableHook for WSPStartup succeeded" << std::endl;
+        return true;
+    }
 
-        g_HookInitialized.store(true);
+    // Succeeds only if at least one complete TCP enforcement layer is active:
+    //   layer "wsp": WSPStartup hook (WSPConnect of every provider), or
+    //   layer "ws2": WS2_32 connect + WSAConnect hooks.
+    // A false result makes DllMain unhook everything and terminate the process.
+    // (ConnectEx, which neither layer sees, is a mandatory part of offline::Hook.)
+    BOOL Hook() {
         std::cout << "[WinsockHook] ============================================" << std::endl;
-        std::cout << "[WinsockHook] Multi-layer hook initialization complete!" << std::endl;
-        std::cout << "[WinsockHook] Layer 1 (WS2_32): " << (g_WS2HooksInstalled.load() ? "ACTIVE" : "PARTIAL") << std::endl;
-        std::cout << "[WinsockHook] Layer 2 (WSP): READY (will activate on first Winsock call)" << std::endl;
+        std::cout << "[WinsockHook] Initializing multi-layer winsock hook..." << std::endl;
+        std::cout << "[WinsockHook] Target hostname: " << config::HostName << std::endl;
         std::cout << "[WinsockHook] ============================================" << std::endl;
-        return TRUE;
+
+        // Providers (MSWSOCK.dll) load lazily on the first socket; once loaded, the WSP hook is too late.
+        const bool providersAlreadyLoaded = GetModuleHandleA("MSWSOCK.dll") != nullptr;
+
+        // Check if Winsock is already initialized (timing issue detection)
+        WSADATA wsaData;
+        int wsaInitResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (wsaInitResult == 0) {
+            std::cout << "[WinsockHook] WARNING: Winsock already initialized or just initialized now" << std::endl;
+            WSACleanup();
+        } else {
+            std::cout << "[WinsockHook] Winsock not yet initialized (good for WSP hook)" << std::endl;
+        }
+
+        std::cout << "[WinsockHook] Installing layer ws2: WS2_32 connect/WSAConnect hooks..." << std::endl;
+        const bool ws2Active = ws2_fallback::InstallWS2Hooks() != FALSE;
+
+        std::cout << "[WinsockHook] Installing layer wsp: WSP hooks..." << std::endl;
+        const bool wspActive = InstallWspLayer(providersAlreadyLoaded);
+
+        const bool ok = ws2Active || wspActive;
+        g_HookInitialized.store(ok);
+
+        offline::TestReport("WINSOCK", (std::string("wsp=") + (wspActive ? "1" : "0") + " ws2=" + (ws2Active ? "1" : "0")).c_str());
+
+        std::cout << "[WinsockHook] ============================================" << std::endl;
+        std::cout << "[WinsockHook] Layer ws2 (WS2_32 connect/WSAConnect): " << (ws2Active ? "ACTIVE" : "FAILED") << std::endl;
+        std::cout << "[WinsockHook] Layer wsp (WSPConnect): " << (wspActive ? "READY (activates on first Winsock call)" : "FAILED") << std::endl;
+        if (!ok) {
+            std::cerr << "[WinsockHook] ERROR: no TCP enforcement layer is active - refusing to run" << std::endl;
+        }
+        std::cout << "[WinsockHook] ============================================" << std::endl;
+        return ok ? TRUE : FALSE;
     }
 }

@@ -5,6 +5,7 @@
 #include <WinDNS.h>
 #include <MinHook.h>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <mutex>
 #include <set>
@@ -264,7 +265,11 @@ namespace offline {
 		}
 
 		template <typename T>
-		bool Install(HMODULE module, const char* function, T hook, T* original) {
+		bool Install(const char* layer, HMODULE module, const char* function, T hook, T* original) {
+			if (TestForcedFail(layer)) {
+				std::cerr << "[Offline] (test) forced failure of layer " << layer << " at " << function << std::endl;
+				return false;
+			}
 			FARPROC target = module ? GetProcAddress(module, function) : nullptr;
 			if (!target) {
 				std::cerr << "[Offline] " << function << " not found" << std::endl;
@@ -276,6 +281,48 @@ namespace offline {
 				return false;
 			}
 			return true;
+		}
+	}
+
+	bool TestMode() {
+		char value[8] = { 0 };
+		DWORD length = GetEnvironmentVariableA("OFFLINE_GUARD_TEST", value, sizeof(value));
+		return length == 1 && value[0] == '1';
+	}
+
+	bool TestForcedFail(const char* layer) {
+		if (!TestMode()) {
+			return false;
+		}
+		char list[256] = { 0 };
+		DWORD length = GetEnvironmentVariableA("OFFLINE_GUARD_TEST_FAIL", list, sizeof(list));
+		if (length == 0 || length >= sizeof(list)) {
+			return false;
+		}
+		size_t layerLength = strlen(layer);
+		const char* cursor = list;
+		while (*cursor) {
+			const char* end = strchr(cursor, ',');
+			size_t tokenLength = end ? (size_t)(end - cursor) : strlen(cursor);
+			if (tokenLength == layerLength && _strnicmp(cursor, layer, layerLength) == 0) {
+				return true;
+			}
+			cursor += tokenLength;
+			if (*cursor == ',') {
+				cursor++;
+			}
+		}
+		return false;
+	}
+
+	bool TestNoUI() {
+		char value[8] = { 0 };
+		return TestMode() && GetEnvironmentVariableA("OFFLINE_GUARD_TEST_NOUI", value, sizeof(value)) == 1 && value[0] == '1';
+	}
+
+	void TestReport(const char* key, const char* value) {
+		if (TestMode()) {
+			SetEnvironmentVariableA((std::string("OFFLINE_GUARD_RESULT_") + key).c_str(), value);
 		}
 	}
 
@@ -295,22 +342,41 @@ namespace offline {
 			kernel = GetModuleHandleA("KERNEL32.dll");
 		}
 
-		bool ok = true;
-		ok &= Install(ws2, "getaddrinfo", &getaddrinfo_Hook, &Original_getaddrinfo);
-		ok &= Install(ws2, "GetAddrInfoW", &GetAddrInfoW_Hook, &Original_GetAddrInfoW);
-		ok &= Install(ws2, "GetAddrInfoExW", &GetAddrInfoExW_Hook, &Original_GetAddrInfoExW);
-		ok &= Install(ws2, "gethostbyname", &gethostbyname_Hook, &Original_gethostbyname);
-		ok &= Install(ws2, "sendto", &sendto_Hook, &Original_sendto);
-		ok &= Install(ws2, "WSASendTo", &WSASendTo_Hook, &Original_WSASendTo);
-		ok &= Install(ws2, "WSAIoctl", &WSAIoctl_Hook, &Original_WSAIoctl);
-		ok &= Install(dns, "DnsQuery_A", &DnsQuery_A_Hook, &Original_DnsQuery_A);
-		ok &= Install(dns, "DnsQuery_W", &DnsQuery_W_Hook, &Original_DnsQuery_W);
-		ok &= Install(dns, "DnsQuery_UTF8", &DnsQuery_UTF8_Hook, &Original_DnsQuery_UTF8);
-		Install(dns, "DnsQueryEx", &DnsQueryEx_Hook, &Original_DnsQueryEx); // absent on very old Windows
-		ok &= Install(kernel, "CreateFileA", &CreateFileA_Hook, &Original_CreateFileA);
-		ok &= Install(kernel, "CreateFileW", &CreateFileW_Hook, &Original_CreateFileW);
+		// Every guard is required (no short-circuit: all of them are attempted and logged). Each group is reported
+		// separately so a failure names the guard that is missing.
+		bool dnsOk = true;
+		dnsOk &= Install("dns", ws2, "getaddrinfo", &getaddrinfo_Hook, &Original_getaddrinfo);
+		dnsOk &= Install("dns", ws2, "GetAddrInfoW", &GetAddrInfoW_Hook, &Original_GetAddrInfoW);
+		dnsOk &= Install("dns", ws2, "GetAddrInfoExW", &GetAddrInfoExW_Hook, &Original_GetAddrInfoExW);
+		dnsOk &= Install("dns", ws2, "gethostbyname", &gethostbyname_Hook, &Original_gethostbyname);
+		dnsOk &= Install("dns", dns, "DnsQuery_A", &DnsQuery_A_Hook, &Original_DnsQuery_A);
+		dnsOk &= Install("dns", dns, "DnsQuery_W", &DnsQuery_W_Hook, &Original_DnsQuery_W);
+		dnsOk &= Install("dns", dns, "DnsQuery_UTF8", &DnsQuery_UTF8_Hook, &Original_DnsQuery_UTF8);
+		// DnsQueryEx is absent on very old Windows (nothing to guard there), but if it exists it must be hooked.
+		if (dns && GetProcAddress(dns, "DnsQueryEx")) {
+			dnsOk &= Install("dns", dns, "DnsQueryEx", &DnsQueryEx_Hook, &Original_DnsQueryEx);
+		}
 
-		std::cout << "[Offline] Internet guard " << (ok ? "active" : "partially active") << std::endl;
+		bool udpOk = true;
+		udpOk &= Install("udp", ws2, "sendto", &sendto_Hook, &Original_sendto);
+		udpOk &= Install("udp", ws2, "WSASendTo", &WSASendTo_Hook, &Original_WSASendTo);
+
+		// ConnectEx is handed out through WSAIoctl; neither the WSP hook nor the connect/WSAConnect hooks see it.
+		bool connectExOk = Install("connectex", ws2, "WSAIoctl", &WSAIoctl_Hook, &Original_WSAIoctl);
+
+		bool discordOk = true;
+		discordOk &= Install("discord", kernel, "CreateFileA", &CreateFileA_Hook, &Original_CreateFileA);
+		discordOk &= Install("discord", kernel, "CreateFileW", &CreateFileW_Hook, &Original_CreateFileW);
+
+		bool ok = dnsOk && udpOk && connectExOk && discordOk;
+		TestReport("OFFLINE", (std::string("dns=") + (dnsOk ? "1" : "0") + " udp=" + (udpOk ? "1" : "0") +
+			" connectex=" + (connectExOk ? "1" : "0") + " discord=" + (discordOk ? "1" : "0")).c_str());
+		if (!ok) {
+			std::cerr << "[Offline] Missing guards:" << (dnsOk ? "" : " dns") << (udpOk ? "" : " udp")
+				<< (connectExOk ? "" : " connectex") << (discordOk ? "" : " discord") << std::endl;
+		}
+
+		std::cout << "[Offline] Internet guard " << (ok ? "active" : "NOT fully active") << std::endl;
 		return ok;
 	}
 }

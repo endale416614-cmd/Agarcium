@@ -30,8 +30,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
                 return FALSE;
             }
 
-            // Load our custom DLL
-            LoadLibraryA("AgarciumClient.dll");
+            // Load our custom DLL. It carries the offline guard, so the game must not run without it:
+            // it returns FALSE from DllMain (and LoadLibrary fails) if it cannot be set up, and it can be missing.
+            if (LoadLibraryA("AgarciumClient.dll") == NULL) {
+                MessageBoxA(NULL, "AgarciumClient.dll could not be loaded; the offline client patch is not active.", "Error", MB_ICONERROR | MB_OK);
+                TerminateProcess(GetCurrentProcess(), 1);
+                return FALSE;
+            }
 
             // Get addresses of the original functions using their mangled names
             OriginalNxControllerManagerConstructor0 = (OriginalNxControllerManagerConstructor0_t)GetProcAddress(hOriginalDLL, "??0NxControllerManager@@IEAA@XZ");
