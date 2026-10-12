@@ -402,3 +402,6 @@ FodyWeavers.xsd
 
 tests/guard_test/*.exe
 tests/guard_test/*.obj
+
+# Local test harnesses (not part of the published patch)
+tests/
