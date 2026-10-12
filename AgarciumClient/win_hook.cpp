@@ -9,7 +9,8 @@ namespace win {
 		static decltype(&CreateWindowExA) _CreateWindowExA = &CreateWindowExA;
 
 		decltype(&CreateWindowExA) Hook = [](DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName, DWORD dwStyle, int x, int y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam) -> HWND {
-			if (!config::WindowName.empty() && strcmp(lpClassName, CLIENT_CLASS)) {
+			// A class name may be an ATOM (or NULL), not a string.
+			if (!config::WindowName.empty() && lpClassName && !IS_INTRESOURCE(lpClassName) && strcmp(lpClassName, CLIENT_CLASS)) {
 				lpWindowName = config::WindowName.c_str();
 			}
 

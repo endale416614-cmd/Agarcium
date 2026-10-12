@@ -9,6 +9,7 @@
 #include "hook.h"
 #include "xml_hook.h"
 #include "mod_loader.h"
+#include "offline_guard.h"
 
 constexpr char CLIENT_LOCALE[] = "en-US";
 FILE* fpstdout = stdout;
@@ -26,7 +27,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         if (MH_Initialize() != MH_OK)
             return false;
 
-        if (AllocConsole()) {
+        // Only create the (hidden) console when asked: otherwise every log line costs a write to conhost.
+        if (config::EnableConsole && AllocConsole()) {
             AttachConsole(GetCurrentProcessId());
             ShowWindow(GetConsoleWindow(), SW_HIDE);
 
@@ -48,13 +50,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         loader.LoadMods(config::ModsPath);
 
-        if (!win::Hook()) {
-            MessageBoxA(NULL, "Failed to hook window.", "Error", MB_ICONERROR | MB_OK);
-            return FALSE;
-        }
-
-        if (!winsock::Hook()) {
-            MessageBoxA(NULL, "Failed to hook winsock.", "Error", MB_ICONERROR | MB_OK);
+        // On failure: remove every hook already installed (returning FALSE unloads this DLL, so live hooks would
+        // jump into freed memory), then close the game - it must not run without the redirect and offline guard.
+        if (!win::Hook() || !winsock::Hook() || !offline::Hook()) {
+            MH_DisableHook(MH_ALL_HOOKS);
+            MH_Uninitialize();
+            MessageBoxA(NULL, "Failed to install the offline client patch (window, winsock or internet guard hooks).", "Error", MB_ICONERROR | MB_OK);
+            TerminateProcess(GetCurrentProcess(), 1);
             return FALSE;
         }
 

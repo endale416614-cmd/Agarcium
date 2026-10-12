@@ -10,6 +10,7 @@
 #include "config.h"
 #include "hook.h"
 #include "winsock_hook.h"
+#include "offline_guard.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -163,6 +164,11 @@ namespace winsock {
                 std::wcout << L"[WSPConnect] No pattern match for address: " << szAddr << L" - passing through without redirect" << std::endl;
             }
 
+            if (!offline::AllowAddress(name, namelen, "WSPConnect")) {
+                if (lpErrno) *lpErrno = WSAENETUNREACH;
+                return SOCKET_ERROR;
+            }
+
             std::cout << "[WSPConnect] Connecting to " << inet_ntoa(service->sin_addr) << ":" << pPort << std::endl;
 
             int result = g_ProcTable.lpWSPConnect(s, name, namelen, lpCallerData, lpCalleeData, lpSQOS, lpGQOS, lpErrno);
@@ -224,6 +230,11 @@ namespace winsock {
                 }
             }
 
+            if (!offline::AllowAddress(name, namelen, "connect")) {
+                WSASetLastError(WSAENETUNREACH);
+                return SOCKET_ERROR;
+            }
+
             return Original_connect(s, name, namelen);
         }
 
@@ -246,6 +257,11 @@ namespace winsock {
                         std::cout << "[WS2_WSAConnect] Redirected to " << inet_ntoa(service->sin_addr) << ":" << port << std::endl;
                     }
                 }
+            }
+
+            if (!offline::AllowAddress(name, namelen, "WSAConnect")) {
+                WSASetLastError(WSAENETUNREACH);
+                return SOCKET_ERROR;
             }
 
             return Original_WSAConnect(s, name, namelen, lpCallerData, lpCalleeData, lpSQOS, lpGQOS);

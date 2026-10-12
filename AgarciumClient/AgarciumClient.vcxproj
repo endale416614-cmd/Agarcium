@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.props" Condition="Exists('..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -157,6 +157,7 @@
     <ClInclude Include="winsock_hook.h" />
     <ClInclude Include="win_hook.h" />
     <ClInclude Include="xml_hook.h" />
+    <ClInclude Include="offline_guard.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="config.cpp" />
@@ -166,6 +167,7 @@
     <ClCompile Include="winsock_hook.cpp" />
     <ClCompile Include="win_hook.cpp" />
     <ClCompile Include="xml_hook.cpp" />
+    <ClCompile Include="offline_guard.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

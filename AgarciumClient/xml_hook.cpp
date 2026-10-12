@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include "xml_hook.h"
 #include "hook.h"
 #include <MinHook.h>
@@ -28,6 +29,8 @@ namespace xml_hook {
 			// No mods for this file
 			return false;
 		}
+		// The mod document is only a source to copy from (InsertEndChild deep-copies); free it on every path.
+		std::unique_ptr<TiXmlDocument> modDocument(modHandle);
 
 		// Delete the <ms2> node on xmlHandle
 		TiXmlNode* ms2Node = xmlHandle->FirstChild("ms2");

@@ -1,7 +1,7 @@
 #include <iostream>
 #include "hook.h"
 #include "config.h"
-#include <atlstr.h>
+#include "cstring_lite.h"
 #include <thread>
 #include <condition_variable>
 #include "xml_hook.h"
@@ -67,8 +67,8 @@ namespace hook {
 		}
 		// gLoginUsername
 		uintptr_t dwGlobalLoginUsername = 0x14210e398;
-		ATL::CString* username = reinterpret_cast<ATL::CString*>(dwGlobalLoginUsername);
-		username->SetString((LPCWSTR)config::Username.c_str());
+		auto* username = reinterpret_cast<cstring_lite::CStringA*>(dwGlobalLoginUsername);
+		username->SetString(config::Username);
 
 		return true;
 	}
@@ -80,8 +80,8 @@ namespace hook {
 
 		// gLoginPassword
 		uintptr_t dwGlobalLoginPassword = 0x14210e3a0;
-		ATL::CString* password = reinterpret_cast<ATL::CString*>(dwGlobalLoginPassword);
-		password->SetString((LPCWSTR)config::Password.c_str());
+		auto* password = reinterpret_cast<cstring_lite::CStringA*>(dwGlobalLoginPassword);
+		password->SetString(config::Password);
 
 		return true;
 	}
