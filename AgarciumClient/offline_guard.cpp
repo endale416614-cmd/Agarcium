@@ -232,38 +232,6 @@ namespace offline {
 			return result;
 		}
 
-		// ---- Discord Rich Presence (local pipe, but it publishes what you play) ----
-		decltype(&CreateFileA) Original_CreateFileA = nullptr;
-		decltype(&CreateFileW) Original_CreateFileW = nullptr;
-
-		bool IsDiscordPipe(const std::string& path) {
-			std::string lower;
-			for (char c : path) {
-				lower += (char)tolower((unsigned char)c);
-			}
-			return lower.find("\\pipe\\discord-ipc-") != std::string::npos;
-		}
-
-		HANDLE WINAPI CreateFileA_Hook(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES security,
-				DWORD disposition, DWORD flags, HANDLE templateFile) {
-			if (name && IsDiscordPipe(name)) {
-				Log(std::string("Discord pipe ") + name);
-				SetLastError(ERROR_FILE_NOT_FOUND);
-				return INVALID_HANDLE_VALUE;
-			}
-			return Original_CreateFileA(name, access, share, security, disposition, flags, templateFile);
-		}
-
-		HANDLE WINAPI CreateFileW_Hook(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES security,
-				DWORD disposition, DWORD flags, HANDLE templateFile) {
-			if (name && wcsstr(name, L"discord-ipc-") && IsDiscordPipe(Narrow(name))) {
-				Log("Discord pipe " + Narrow(name));
-				SetLastError(ERROR_FILE_NOT_FOUND);
-				return INVALID_HANDLE_VALUE;
-			}
-			return Original_CreateFileW(name, access, share, security, disposition, flags, templateFile);
-		}
-
 		template <typename T>
 		bool Install(const char* layer, HMODULE module, const char* function, T hook, T* original) {
 			if (TestForcedFail(layer)) {
@@ -337,10 +305,6 @@ namespace offline {
 	bool Hook() {
 		HMODULE ws2 = LoadLibraryA("WS2_32.dll");
 		HMODULE dns = LoadLibraryA("DNSAPI.dll");
-		HMODULE kernel = GetModuleHandleA("KERNELBASE.dll");
-		if (!kernel) {
-			kernel = GetModuleHandleA("KERNEL32.dll");
-		}
 
 		// Every guard is required (no short-circuit: all of them are attempted and logged). Each group is reported
 		// separately so a failure names the guard that is missing.
@@ -364,16 +328,13 @@ namespace offline {
 		// ConnectEx is handed out through WSAIoctl; neither the WSP hook nor the connect/WSAConnect hooks see it.
 		bool connectExOk = Install("connectex", ws2, "WSAIoctl", &WSAIoctl_Hook, &Original_WSAIoctl);
 
-		bool discordOk = true;
-		discordOk &= Install("discord", kernel, "CreateFileA", &CreateFileA_Hook, &Original_CreateFileA);
-		discordOk &= Install("discord", kernel, "CreateFileW", &CreateFileW_Hook, &Original_CreateFileW);
-
-		bool ok = dnsOk && udpOk && connectExOk && discordOk;
+		// The Discord pipe is left open: it is local, and Discord's own activity setting decides what is shared.
+		bool ok = dnsOk && udpOk && connectExOk;
 		TestReport("OFFLINE", (std::string("dns=") + (dnsOk ? "1" : "0") + " udp=" + (udpOk ? "1" : "0") +
-			" connectex=" + (connectExOk ? "1" : "0") + " discord=" + (discordOk ? "1" : "0")).c_str());
+			" connectex=" + (connectExOk ? "1" : "0")).c_str());
 		if (!ok) {
 			std::cerr << "[Offline] Missing guards:" << (dnsOk ? "" : " dns") << (udpOk ? "" : " udp")
-				<< (connectExOk ? "" : " connectex") << (discordOk ? "" : " discord") << std::endl;
+				<< (connectExOk ? "" : " connectex") << std::endl;
 		}
 
 		std::cout << "[Offline] Internet guard " << (ok ? "active" : "NOT fully active") << std::endl;
