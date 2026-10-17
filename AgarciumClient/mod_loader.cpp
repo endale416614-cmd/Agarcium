@@ -44,6 +44,20 @@ bool ModLoader::LoadMods(const std::string& modsRootPath) {
 			}
 		}
 
+		// mods_ is ordered by id and GetXmlByRelPath takes the first match, so the first mod wins.
+		// Only XML files are served by the hook; other shared names (mod.json, ...) are not conflicts.
+		std::map<std::string, std::string> winners;
+		for (const auto& [modId, modInfo] : mods_) {
+			for (const auto& [key, rel] : modInfo.files) {
+				if (!key.ends_with(".xml")) continue;
+				auto [it, inserted] = winners.emplace(key, modId);
+				if (!inserted) {
+					std::cerr << "[MODLOADER] " << rel << " provided by " << it->second
+						<< " and " << modId << "; using " << it->second << std::endl;
+				}
+			}
+		}
+
 		std::cout << "[MODLOADER] Loaded " << mods_.size() << " mods." << std::endl;
 
 		return true;

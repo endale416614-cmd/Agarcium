@@ -32,6 +32,13 @@ namespace xml_hook {
 		// The mod document is only a source to copy from (InsertEndChild deep-copies); free it on every path.
 		std::unique_ptr<TiXmlDocument> modDocument(modHandle);
 
+		// Check the mod file first: a wrong root or empty file must fall back to the original XML.
+		TiXmlNode* modMs2Node = modHandle->FirstChild("ms2");
+		if (!modMs2Node) {
+			std::cerr << "[MODLOADER] mod file has no <ms2> root: " << modHandle->Value() << std::endl;
+			return false;
+		}
+
 		// Delete the <ms2> node on xmlHandle
 		TiXmlNode* ms2Node = xmlHandle->FirstChild("ms2");
 		if (ms2Node) {
@@ -39,13 +46,10 @@ namespace xml_hook {
 		}
 
 		// Append the <ms2> node from modHandle to xmlHandle
-		TiXmlNode* modMs2Node = modHandle->FirstChild("ms2");
-		if (modMs2Node) {
-			TiXmlNode* newNode = xmlHandle->InsertEndChild(*modMs2Node);
-			if (!newNode) {
-				std::cerr << "[MODLOADER] Failed to insert ms2 node from modHandle." << std::endl;
-				return false;
-			}
+		TiXmlNode* newNode = xmlHandle->InsertEndChild(*modMs2Node);
+		if (!newNode) {
+			std::cerr << "[MODLOADER] Failed to insert ms2 node from modHandle." << std::endl;
+			return false;
 		}
 
 		// TODO: improved merging for ie. korItemDescription
