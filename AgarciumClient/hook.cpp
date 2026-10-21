@@ -5,6 +5,7 @@
 #include <thread>
 #include <condition_variable>
 #include "xml_hook.h"
+#include "hook_guard.h"
 #include <MinHook.h>
 
 namespace hook {
@@ -17,6 +18,18 @@ namespace hook {
 			*(BYTE*)(dwAddr + i) = bytes[i];
 		}
 		return true;
+	}
+
+	// Writes game data only into the client this patch was written for.
+	bool PatchGameData(const char* name, DWORD_PTR dwAddr, const std::vector<BYTE>& bytes) {
+		return hook_guard::CheckGameExe(name) &&
+			hook_guard::Report(name, WriteBytes(dwAddr, bytes), "address outside the exe");
+	}
+
+	// Patches game code only if the client and the original bytes there are the ones the patch was written for.
+	bool PatchGameCode(const char* name, DWORD_PTR dwAddr, uint32_t fnv, const std::vector<BYTE>& bytes) {
+		return hook_guard::CheckGameCode(name, dwAddr, fnv) &&
+			hook_guard::Report(name, WriteBytes(dwAddr, bytes), "address outside the exe");
 	}
 
 	FARPROC GetFuncAddress(LPCSTR lpLibFileName, LPCSTR lpProcName) {
@@ -53,10 +66,7 @@ namespace hook {
 		// gConnectPort
 		DWORD_PTR dwGlobalConnectPort = 0x1421227d4;
 		const std::vector<BYTE> portBytes = intToByteArray(config::Port);
-		WriteBytes(dwGlobalConnectPort, portBytes);
-		std::cout << "gConnectPort: " << (void*)dwGlobalConnectPort << std::endl;
-
-		return true;
+		return PatchGameData("game/gConnectPort", dwGlobalConnectPort, portBytes);
 	}
 
 	bool SetLoginUsername() {
@@ -122,25 +132,12 @@ namespace hook {
 	}
 
 	void LoginHook() {
-		MH_STATUS status = MH_CreateHook(
-			reinterpret_cast<LPVOID>(dwInitLoginUI),
-			reinterpret_cast<LPVOID>(&HookedInitLoginUI),
-			reinterpret_cast<LPVOID*>(&OriginalInitLoginUI)
-		);
-
-		if (status != MH_OK) {
-			std::cerr << "Failed to create InitLoginUI hook. Error code: " << status << std::endl;
-			return;
+		if (hook_guard::CheckGameCode("game/UIService::InitLoginUI", dwInitLoginUI, 0x658ce4cd)) {
+			hook_guard::Install("game/UIService::InitLoginUI",
+				reinterpret_cast<LPVOID>(dwInitLoginUI),
+				reinterpret_cast<LPVOID>(&HookedInitLoginUI),
+				reinterpret_cast<LPVOID*>(&OriginalInitLoginUI));
 		}
-
-		status = MH_EnableHook(reinterpret_cast<LPVOID>(dwInitLoginUI));
-
-		if (status != MH_OK) {
-			std::cerr << "Failed to enable InitLoginUI hook. Error code: " << status << std::endl;
-			return;
-		}
-
-		std::cout << "UIService::InitLoginUI(): " << (void*)dwInitLoginUI << std::endl;
 	}
 
 	bool PatchClient() {
@@ -151,21 +148,16 @@ namespace hook {
 		// CCommonString::CheckLocale()
 		DWORD_PTR dwLocaleLanguage = 0x140216a20;
 
-		WriteBytes(dwBypassNGS, { 0x33, 0xC0, 0xC3 }); // return 0
-		std::cout << "CAntiHackManager::InitInstance(): " << (void*)dwBypassNGS << std::endl;
-
-		WriteBytes(dwDisableNXL, { 0xB8, 0x00, 0x00, 0x00, 0x00 }); // return 0
-		std::cout << "CGameApp::IsNXLEnabled(): " << (void*)dwDisableNXL << std::endl;
-
-		WriteBytes(dwLocaleLanguage, { 0xB8, 0x00, 0x00, 0x00, 0x00, 0xC3 }); // return 0
-		std::cout << "CCommonString::CheckLocale(): " << (void*)dwLocaleLanguage << std::endl;
+		PatchGameCode("game/CAntiHackManager::InitInstance", dwBypassNGS, 0xf93eedc8, { 0x33, 0xC0, 0xC3 }); // return 0
+		PatchGameCode("game/CGameApp::IsNXLEnabled", dwDisableNXL, 0x139f645f, { 0xB8, 0x00, 0x00, 0x00, 0x00 }); // return 0
+		PatchGameCode("game/CCommonString::CheckLocale", dwLocaleLanguage, 0x09c02c8c, { 0xB8, 0x00, 0x00, 0x00, 0x00, 0xC3 }); // return 0
 
 		SetClientPort();
 
 		if (config::EnableAutoLogin) {
 			// note: stops manual input of login fields!
 			DWORD_PTR dwUseLoginFields = 0x14210e20b;
-			WriteBytes(dwUseLoginFields, { 0x01 });
+			PatchGameData("game/gUseLoginFields", dwUseLoginFields, { 0x01 });
 
 			LoginHook();
 		}

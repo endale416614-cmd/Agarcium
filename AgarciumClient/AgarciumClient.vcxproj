@@ -72,6 +72,11 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>..\third_party\minhook\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TinyXmlLinkage>StaticMT</TinyXmlLinkage>
     <TargetName>AgarciumClient</TargetName>
@@ -153,6 +158,7 @@
   <ItemGroup>
     <ClInclude Include="config.h" />
     <ClInclude Include="hook.h" />
+    <ClInclude Include="hook_guard.h" />
     <ClInclude Include="mod_loader.h" />
     <ClInclude Include="winsock_hook.h" />
     <ClInclude Include="win_hook.h" />
@@ -163,11 +169,23 @@
     <ClCompile Include="config.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="hook.cpp" />
+    <ClCompile Include="hook_guard.cpp" />
     <ClCompile Include="mod_loader.cpp" />
     <ClCompile Include="winsock_hook.cpp" />
     <ClCompile Include="win_hook.cpp" />
     <ClCompile Include="xml_hook.cpp" />
     <ClCompile Include="offline_guard.cpp" />
+  </ItemGroup>
+  <!-- MinHook, built from source with the same compiler (a prebuilt .lib from another MSVC version fails to link: C1047). -->
+  <ItemGroup>
+    <ClInclude Include="..\third_party\minhook\include\MinHook.h" />
+    <ClCompile Include="..\third_party\minhook\src\buffer.c" />
+    <ClCompile Include="..\third_party\minhook\src\hook.c">
+      <ObjectFileName>$(IntDir)minhook_hook.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\third_party\minhook\src\trampoline.c" />
+    <ClCompile Include="..\third_party\minhook\src\hde\hde32.c" />
+    <ClCompile Include="..\third_party\minhook\src\hde\hde64.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
@@ -177,7 +195,6 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\packages\minhook_v143.1.3.4.1\build\native\minhook_v143.targets" />
     <Import Project="..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.targets" Condition="Exists('..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.targets')" />
     <Import Project="..\packages\TinyXML.Static.2.6.2.2\build\native\TinyXML.Static.targets" Condition="Exists('..\packages\TinyXML.Static.2.6.2.2\build\native\TinyXML.Static.targets')" />
     <Import Project="..\packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets" Condition="Exists('..\packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" />
@@ -186,7 +203,6 @@
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('..\packages\minhook_v143.1.3.4.1\build\native\minhook_v143.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\minhook_v143.1.3.4.1\build\native\minhook_v143.targets'))" />
     <Error Condition="!Exists('..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.props'))" />
     <Error Condition="!Exists('..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\YY.NuGet.Import.Helper.1.0.0.4\build\native\YY.NuGet.Import.Helper.targets'))" />
     <Error Condition="!Exists('..\packages\TinyXML.Static.2.6.2.2\build\native\TinyXML.Static.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\TinyXML.Static.2.6.2.2\build\native\TinyXML.Static.targets'))" />

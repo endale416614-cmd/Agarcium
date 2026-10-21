@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include "offline_guard.h"
+#include "hook_guard.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -25,23 +26,7 @@ namespace offline {
 				return; // each blocked destination is logged once
 			}
 			std::cout << "[Offline] Blocked " << what << std::endl;
-
-			char path[MAX_PATH] = { 0 };
-			HMODULE self = GetModuleHandleA("AgarciumClient.dll");
-			if (!self || !GetModuleFileNameA(self, path, MAX_PATH)) {
-				return;
-			}
-			std::string logPath(path);
-			logPath = logPath.substr(0, logPath.find_last_of("\\/") + 1) + "offline_guard.log";
-
-			FILE* file = nullptr;
-			if (fopen_s(&file, logPath.c_str(), "a") == 0 && file) {
-				SYSTEMTIME now;
-				GetLocalTime(&now);
-				fprintf(file, "%04d-%02d-%02d %02d:%02d:%02d blocked %s\n",
-					now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, what.c_str());
-				fclose(file);
-			}
+			hook_guard::Log("blocked " + what);
 		}
 
 		std::string Describe(const sockaddr* addr, int addrlen) {
@@ -238,17 +223,12 @@ namespace offline {
 				std::cerr << "[Offline] (test) forced failure of layer " << layer << " at " << function << std::endl;
 				return false;
 			}
+			std::string name = std::string(layer) + "/" + function;
 			FARPROC target = module ? GetProcAddress(module, function) : nullptr;
 			if (!target) {
-				std::cerr << "[Offline] " << function << " not found" << std::endl;
-				return false;
+				return hook_guard::Report(name.c_str(), false, "export not found");
 			}
-			if (MH_CreateHook(target, reinterpret_cast<LPVOID>(hook), reinterpret_cast<LPVOID*>(original)) != MH_OK ||
-					MH_EnableHook(target) != MH_OK) {
-				std::cerr << "[Offline] Failed to hook " << function << std::endl;
-				return false;
-			}
-			return true;
+			return hook_guard::Install(name.c_str(), target, reinterpret_cast<LPVOID>(hook), reinterpret_cast<LPVOID*>(original));
 		}
 	}
 

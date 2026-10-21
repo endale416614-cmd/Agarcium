@@ -12,6 +12,7 @@
 #include "hook.h"
 #include "winsock_hook.h"
 #include "offline_guard.h"
+#include "hook_guard.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -285,23 +286,12 @@ namespace winsock {
         // Hooks one WS2_32 export. True only if the hook is created AND enabled.
         template <typename T>
         bool HookExport(HMODULE module, const char* name, T detour, T* original) {
+            std::string hookName = std::string("ws2/") + name;
             FARPROC target = GetProcAddress(module, name);
             if (!target) {
-                std::cerr << "[WS2Hooks] " << name << " export not found" << std::endl;
-                return false;
+                return hook_guard::Report(hookName.c_str(), false, "export not found");
             }
-            MH_STATUS status = MH_CreateHook(target, reinterpret_cast<LPVOID>(detour), reinterpret_cast<LPVOID*>(original));
-            if (status != MH_OK) {
-                std::cerr << "[WS2Hooks] Failed to hook " << name << ": " << MH_StatusToString(status) << std::endl;
-                return false;
-            }
-            status = MH_EnableHook(target);
-            if (status != MH_OK) {
-                std::cerr << "[WS2Hooks] Failed to enable " << name << " hook: " << MH_StatusToString(status) << std::endl;
-                return false;
-            }
-            std::cout << "[WS2Hooks] " << name << " hook installed" << std::endl;
-            return true;
+            return hook_guard::Install(hookName.c_str(), target, reinterpret_cast<LPVOID>(detour), reinterpret_cast<LPVOID*>(original));
         }
 
         // Enforcement layer "ws2": the layer is complete only if BOTH connect and WSAConnect are hooked and enabled
@@ -357,15 +347,13 @@ namespace winsock {
             return false;
         }
         if (providersAlreadyLoaded) {
-            std::cerr << "[WinsockHook] WSP layer unusable: MSWSOCK.dll was loaded before the hook (WSPStartup already ran)" << std::endl;
-            return false;
+            return hook_guard::Report("wsp/WSPStartup", false, "MSWSOCK.dll was loaded before the hook (WSPStartup already ran)");
         }
 
         static decltype(&WSPStartup) _WSPStartup = nullptr;
         WSPStartupAddr = (WSPStartup_t)hook::GetFuncAddress("MSWSOCK", "WSPStartup");
         if (!WSPStartupAddr) {
-            std::cerr << "[WinsockHook] WSP layer unusable: WSPStartup not found in MSWSOCK.dll" << std::endl;
-            return false;
+            return hook_guard::Report("wsp/WSPStartup", false, "WSPStartup not found in MSWSOCK.dll");
         }
         std::cout << "[WinsockHook] WSPStartupAddr: " << (void*)WSPStartupAddr << std::endl;
 
@@ -399,18 +387,7 @@ namespace winsock {
             return ret;
         };
 
-        MH_STATUS createStatus = MH_CreateHook(WSPStartupAddr, Hook, reinterpret_cast<void**>(&_WSPStartup));
-        if (createStatus != MH_OK) {
-            std::cerr << "[WinsockHook] WSP layer unusable: MH_CreateHook for WSPStartup failed: " << MH_StatusToString(createStatus) << std::endl;
-            return false;
-        }
-        MH_STATUS enableStatus = MH_EnableHook(WSPStartupAddr);
-        if (enableStatus != MH_OK) {
-            std::cerr << "[WinsockHook] WSP layer unusable: MH_EnableHook for WSPStartup failed: " << MH_StatusToString(enableStatus) << std::endl;
-            return false;
-        }
-        std::cout << "[WinsockHook] MH_CreateHook/MH_EnableHook for WSPStartup succeeded" << std::endl;
-        return true;
+        return hook_guard::Install("wsp/WSPStartup", WSPStartupAddr, Hook, reinterpret_cast<void**>(&_WSPStartup));
     }
 
     // Succeeds only if at least one complete TCP enforcement layer is active:

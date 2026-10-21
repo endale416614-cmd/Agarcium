@@ -3,6 +3,7 @@
 #include "config.h"
 #include "win_hook.h"
 #include "hook.h"
+#include "hook_guard.h"
 
 namespace win {
 	BOOL Hook_CreateWindowExA(BOOL bEnable) {
@@ -17,14 +18,8 @@ namespace win {
 			return _CreateWindowExA(dwExStyle, lpClassName, lpWindowName, dwStyle, x, y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam);
 			};
 
-		if (MH_CreateHook(&CreateWindowExA, Hook,
-			reinterpret_cast<LPVOID*>(&_CreateWindowExA)) != MH_OK)
-			return false;
-
-		if (MH_EnableHook(&CreateWindowExA) != MH_OK)
-			return false;
-
-		return true;
+		return hook_guard::Install("window/CreateWindowExA", &CreateWindowExA, Hook,
+			reinterpret_cast<LPVOID*>(&_CreateWindowExA));
 	}
 
 	BOOL Hook_CreateMutexA(BOOL bEnable) {
@@ -50,14 +45,8 @@ namespace win {
 			return _CreateMutexA(lpMutexAttributes, bInitialOwner, lpName);
 			};
 
-		if (MH_CreateHook(&CreateMutexA, Hook,
-			reinterpret_cast<LPVOID*>(&_CreateMutexA)) != MH_OK)
-			return false;
-
-		if (MH_EnableHook(&CreateMutexA) != MH_OK)
-			return false;
-
-		return true;
+		return hook_guard::Install("window/CreateMutexA", &CreateMutexA, Hook,
+			reinterpret_cast<LPVOID*>(&_CreateMutexA));
 	}
 
 	BOOL Hook() {

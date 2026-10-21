@@ -2,6 +2,7 @@
 #include <memory>
 #include "xml_hook.h"
 #include "hook.h"
+#include "hook_guard.h"
 #include <MinHook.h>
 #include <tinyxml.h>
 #include "mod_loader.h"
@@ -74,18 +75,9 @@ namespace xml_hook {
 	BOOL Hook_ReadXMLFile(BOOL bEnable) {
 		OriginalReadXMLFile = (ReadXMLFile_t)0x1402a9af0;
 
-		if (MH_CreateHook((PVOID)OriginalReadXMLFile, (PVOID)HookedReadXMLFile,
-			reinterpret_cast<LPVOID*>(&_ReadXMLFile)) != MH_OK) {
-			std::cerr << "Failed to hook XML" << std::endl;
-			return false;
-		}
-
-		if (MH_EnableHook((PVOID)OriginalReadXMLFile) != MH_OK) {
-			std::cerr << "Failed to enable XML hook" << std::endl;
-			return false;
-		}
-
-		return true;
+		return hook_guard::CheckGameCode("game/CFileSystem::ReadXMLFile", (uintptr_t)OriginalReadXMLFile, 0xae2f6b7d) &&
+			hook_guard::Install("game/CFileSystem::ReadXMLFile", (PVOID)OriginalReadXMLFile, (PVOID)HookedReadXMLFile,
+				reinterpret_cast<LPVOID*>(&_ReadXMLFile));
 	}
 
 	BOOL init() {

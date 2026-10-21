@@ -1,0 +1,3 @@
+MinHook 1.3.4 (BSD 2-Clause, see LICENSE.txt)
+https://github.com/TsudaKageyu/minhook tag v1.3.4, commit c3fcafdc10146beb5919319d0683e44e3c30d537
+include/, src/ and LICENSE.txt copied unchanged. Built by AgarciumClient.vcxproj with the solution's compiler.
