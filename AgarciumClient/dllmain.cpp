@@ -10,6 +10,7 @@
 #include "xml_hook.h"
 #include "mod_loader.h"
 #include "offline_guard.h"
+#include "hook_guard.h"
 
 constexpr char CLIENT_LOCALE[] = "en-US";
 FILE* fpstdout = stdout;
@@ -70,6 +71,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             return FALSE;
         }
 
+        // Diagnostics only (BT-217): the game runs whether or not it is in place.
+        hook_guard::InstallCrashLog();
         break;
     }
 

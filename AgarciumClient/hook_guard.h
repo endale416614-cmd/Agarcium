@@ -32,4 +32,10 @@ namespace hook_guard {
 
 	// MH_CreateHook + MH_EnableHook; logs the result for name.
 	bool Install(const char* name, LPVOID target, LPVOID detour, LPVOID* original);
+
+	// BT-217: when the game crashes, writes one line to offline_guard.log, for example
+	//   crash: exception 0xC0000005 (write of 0x0000000000000010) at MapleStory2.exe+0x1a2b3c, thread 1234
+	// from a top-level exception filter that then calls the one the game set. SetUnhandledExceptionFilter is hooked, so a
+	// filter set later (the game's crash reporter) is called after ours instead of replacing it. Never fails the patch.
+	void InstallCrashLog();
 }
